@@ -1,3 +1,140 @@
+# 基于paddle＋paddleocr＋paddlenlp的跨模态文档问答系统
+
+### 项目来自于[paddlenlp](https://github.com/PaddlePaddle/PaddleNLP) 这里主要总结在环境配置和运行中遇到的坑还有效果展示和提升方案+如何与llm结合
+
+### **我的环境：win11+wsl2+ubuntu22.04**
+
+## 安装问题
+
+conda环境尽量使用 miniconda，大大减少包冲突问题
+根据paddle官方文档中的镜像安装的conda版本很旧
+
+每次可能都会提示update **千万不要用这个命令升级** conda版本不会变 甚至还会报错
+
+直接去[miniconda官网](conda install paddlepaddle-gpu==2.0.1 cudatoolkit=10.2 --channel https://mirrors.bfsu.edu.cn/anaconda/cloud/Paddle/
+)下载最新版本的`.sh`文件 然后运行 `bash Miniconda3-latest-Linux-x86_64.sh`
+
+提示会问是否conda init 选择yes
+
+
+**paddlepaddle-gpu安装问题**
+
+paddlepaddle官方的命令（直接安装最新版就行 不用因为paddleocr的文档再去安装cuda10 cudnn7的版本）：
+```shell
+conda install paddlepaddle-gpu==2.4.2 cudatoolkit=11.7 -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/Paddle/ -c conda-forge
+```
+
+下载非常慢（甚至超时）--换源
+
+提速方法1：`conda install paddlepaddle-gpu==2.4.2 cudatoolkit=11.7 -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/Paddle/ `
+
+提速方法2：`conda install paddlepaddle-gpu==2.0.1 cudatoolkit=10.2 -c https://mirrors.bfsu.edu.cn/anaconda/cloud/Paddle/`
+
+验证安装：
+
+官网是这么写的
+`python3` 进入 python 解释器，输入`import paddle` ，再输入 `paddle.utils.run_check()`
+
+**找不到paddle包无法import问题：**
+如果确定conda环境中已经安装了paddlepaddle-gpu版本（conda list看看），用`python`启动解释器 而不是`python3`
+
+conda list已经安装了cudnn和cudatookit 
+
+运行`paddle.utils.run_check()`后出现 **W0523**错误：
+
+（别再换版本重装了）
+
+可能的情况:
+
+```shell
+W0523 17:19:38.360607 12884 dynamic_loader.cc:307] The third-party dynamic library (libcudnn.so) that Paddle depends on is not configured correctly. (error code is /usr/local/cuda/lib64/libcudnn.so: cannot open shared object file: No such file or directory)
+  Suggestions:
+  1. Check if the third-party dynamic library (e.g. CUDA, CUDNN) is installed correctly and its version is matched with paddlepaddle you installed.
+  2. Configure third-party dynamic library environment variables as follows:.....
+
+```
+
+```shell
+W0523 17:47:52.883112 15129 dynamic_loader.cc:307] The third-party dynamic library (libcuda.so) that Paddle depends on is not configured correctly. (error code is libcuda.so: cannot open shared object file: No such file or directory)
+```
+
+```shell
+# 还有一个nccl相关的类似错误
+```
+
+配置环境变量比较清楚的方法：
+在miniconda文件夹下找到相应的lib文件夹：比如/root/miniconda3/pkgs/cudnn-8.4.1.50-hed8a83a_0/lib 把里面的内容复制到 /usr/local/cuda/lib64/ **注意不是复制整个文件夹，而是复制里面的文件（.so）** 
+
+`sudo cp -r ~/miniconda3/pkgs/cudatoolkit-11.7.0-hd8887f6_10/lib/* /usr/local/cuda/lib64/`
+
+`sudo cp -r ~/miniconda3/pkgs/cudatoolkit-11.7.0-hd8887f6_10/lib/* /usr/local/cuda/lib64/`
+
+同理cudatookit和NCCL
+
+注意官方给的命令没有安装NCCL 需要自己安装 ``conda install nccl -c conda-forge` 安装后执行上面的操作
+
+(没有 /usr/local/cuda/lib64/文件就创一个 `mkdir -p /usr/local/cuda/lib64`)
+
+最后在.bashr或者.zshrc下加入该路径即可：
+
+`export LD_LIBRARY_PATH="/usr/local/cuda/lib64"`
+
+另一种可能：
+
+```shell
+Running verify PaddlePaddle program …
+W0805 12:10:54.786352 5446 gpu_resources.cc:61] Please NOTE: device: 0, GPU Compute Capability: 7.5, Driver API Version: 11.7, Runtime API Version: 11.2
+W0805 12:10:54.791039 5446 gpu_resources.cc:91] device: 0, cuDNN Version: 8.1.
+W0805 12:10:55.927047 5446 dynamic_loader.cc:305] The third-party dynamic library (libcuda.so) that Paddle depends on is not configured correctly. (error code is libcuda.so: cannot open shared object file: No such file or directory)
+Suggestions:
+
+Check if the third-party dynamic library (e.g. CUDA, CUDNN) is installed correctly and its version is matched with paddlepaddle you installed.
+Configure third-party dynamic library environment variables as follows:
+......
+```
+paddle没有找到libcuda.so，在wsl中，该文件在/usr/lib/wsl/lib路径下。
+
+在.bashr或者.zshrc下加入该路径即可：
+
+`export LD_LIBRARY_PATH=/usr/lib/wsl/lib:$LD_LIBRARY_PATH`
+
+
+**paddlenlp和paddleOCR安装问题**：
+
+conda找不到包需要用`pip`一律用`python -m pip install xx`
+
+*官方文件好多坑*
+
+paddlenlp官方文档：`pip install --upgrade paddlenlp>=2.0.0rc -i https://pypi.org/simple`
+
+非常慢 
+
+conda可能找不到包 使用：
+
+`python -m pip install paddlenlp -i 镜像源`
+
+下面的pypi镜像换一换 哪个快用哪个：
+
+阿里云 http://mirrors.aliyun.com/pypi/simple/
+中国科技大学 https://pypi.mirrors.ustc.edu.cn/simple/
+豆瓣(douban) http://pypi.douban.com/simple/
+清华大学 https://pypi.tuna.tsinghua.edu.cn/simple/
+中国科学技术大学 http://pypi.mirrors.ustc.edu.cn/simple/
+
+paddleOCR安装要点：不要被paddleOCR官方安装方式中需要CUDA10.2版本迷惑 按要求安装了paddlepaddle-gpu最新版也可以用 
+
+## 运行问题
+
+**OCR处理相关GPU报错：**
+
+验证paddlepaddle是否安装成功
+
+**train报错 找不到src：** 
+
+比如 ./Rerank/src/finetune_args.py中 `from src.utils.args import ArgumentGroup` 观察文件夹目录格式 改成 `from utils.args import ArgumentGroup`报错解决
+
+**运行bash脚本找不到lib：** 脚本里的python3改成python
+
 # 汽车说明书跨模态智能问答
 
 ## 1. 项目说明
